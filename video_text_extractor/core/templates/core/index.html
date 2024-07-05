@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Video Text Extractor</title>
+    <style>
+        #canvas {
+            border: 1px solid black;
+        }
+        #textResult {
+            margin-top: 20px;
+        }
+    </style>
+    <!-- Include the YouTube IFrame Player API script -->
+    <script src="https://www.youtube.com/iframe_api"></script>
+</head>
+<body>
+    <h1>Video Text Extractor</h1>
+    <input type="file" id="videoInput" accept="video/*">
+    <video id="videoPlayer" width="600" controls></video>
+    <input type="text" id="youtubeUrl" placeholder="Enter YouTube URL">
+    <button onclick="loadYouTubeVideo()">Load YouTube Video</button>
+    <div id="playerContainer">
+        <div id="player"></div>
+    </div>
+    <canvas id="canvas" width="600" height="0"></canvas>
+    <button onclick="captureFrame()">Capture Frame</button>
+    <div id="textResult"></div>
+
+    <!-- Translation form -->
+    <hr>
+    <h5>Translate</h5>
+    <div id="translationForm" style="margin-top: 20px;">
+        <textarea id="textToTranslate" placeholder="Enter text to translate"></textarea>
+        <select id="languageSelect">
+            <option value="en">English</option>
+            <option value="ru">Russian</option>
+            <!-- Add more language options as needed -->
+        </select>
+        <button onclick="translateText()">Translate</button>
+    </div>
+
+    <div id="translationResult"></div>
+
+    <script>
+        const videoInput = document.getElementById('videoInput');
+        const videoPlayer = document.getElementById('videoPlayer');
+        const canvas = document.getElementById('canvas');
+        const context = canvas.getContext('2d');
+        let startX, startY, isDrawing = false;
+        let player;
+        let youtubeAPIReady = false;
+
+        
+        videoInput.addEventListener('change', () => {
+            const file = videoInput.files[0];
+            const url = URL.createObjectURL(file);
+            videoPlayer.src = url;
+            document.getElementById('playerContainer').style.display = 'none';
+            videoPlayer.style.display = 'block';
+        });
+
+        function onYouTubeIframeAPIReady() {
+            youtubeAPIReady = true;
+        }
+
+        function loadYouTubeVideo() {
+            const url = document.getElementById('youtubeUrl').value;
+            const videoId = getYouTubeVideoId(url);
+
+            if (videoId) {
+                if (youtubeAPIReady) {
+                    if (player) {
+                        player.loadVideoById(videoId);
+                    } else {
+                        player = new YT.Player('player', {
+                            height: '390',
+                            width: '640',
+                            videoId: videoId,
+                            events: {
+                                'onReady': onPlayerReady,
+                                'onStateChange': onPlayerStateChange
+                            }
+                        });
+                    }
+                } else {
+                    alert('YouTube API not ready. Please wait and try again.');
+                }
+                document.getElementById('playerContainer').style.display = 'block';
+                videoPlayer.style.display = 'none';
+            } else {
+                alert('Invalid YouTube URL');
+            }
+        }
+
+        function getYouTubeVideoId(url) {
+            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+            const match = url.match(regExp);
+            return (match && match[2].length == 11) ? match[2] : null;
+        }
+
+        function onPlayerReady(event) {
+            event.target.playVideo();
+        }
+        
+        function onPlayerStateChange(event) {
+            if (event.data == YT.PlayerState.PLAYING) {
+                // Video is playing
+            }
+        }
+
+        function captureFrame() {
+            if (videoPlayer.style.display === 'block') {
+                canvas.width = videoPlayer.videoWidth;
+                canvas.height = videoPlayer.videoHeight;
+                context.drawImage(videoPlayer, 0, 0, canvas.width, canvas.height);
+            } else if (player && player.getPlayerState() !== YT.PlayerState.PLAYING) {
+                const video = player.getIframe();
+                const rect = video.getBoundingClientRect();
+                canvas.width = rect.width;
+                canvas.height = rect.height;
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        canvas.addEventListener('mousedown', (e) => {
+            isDrawing = true;
+            startX = e.offsetX;
+            startY = e.offsetY;
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (isDrawing) {
+                context.clearRect(0, 0, canvas.width, canvas.height);
+                if (player && player.getPlayerState() == YT.PlayerState.PLAYING) {
+                    const video = player.getIframe();
+                    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                } else {
+                    context.drawImage(videoPlayer, 0, 0, canvas.width, canvas.height);
+                }
+                context.beginPath();
+                context.rect(startX, startY, e.offsetX - startX, e.offsetY - startY);
+                context.strokeStyle = 'red';
+                context.stroke();
+            }
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            isDrawing = false;
+            const width = e.offsetX - startX;
+            const height = e.offsetY - startY;
+            const imageData = context.getImageData(startX, startY, width, height);
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = width;
+            tempCanvas.height = height;
+            const tempContext = tempCanvas.getContext('2d');
+            tempContext.putImageData(imageData, 0, 0);
+            const base64Image = tempCanvas.toDataURL('image/jpeg');
+
+            fetch('/process_frame/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRFToken': '{{ csrf_token }}',
+                },
+                body: `image=${encodeURIComponent(base64Image)}`
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.text) {
+                    document.getElementById('textResult').innerText = data.text;
+                    document.getElementById('textToTranslate').value = data.text;
+                } else {
+                    document.getElementById('textResult').innerText = 'Error extracting text.';
+                }
+            });
+        });
+
+        function translateText() {
+            const text = document.getElementById('textToTranslate').value;
+            const language = document.getElementById('languageSelect').value;
+
+            fetch('/translate_text/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token }}'
+                },
+                body: JSON.stringify({ text: text, language: language })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.translation) {
+                    document.getElementById('translationResult').innerText = data.translation;
+                } else {
+                    document.getElementById('translationResult').innerText = 'Error translating text.';
+                }
+            })
+            .catch(error => console.error('Error:', error));
+        }
+        document.getElementById('playerContainer').style.display = 'none';
+    </script>
+</body>
