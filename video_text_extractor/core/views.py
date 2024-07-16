@@ -7,6 +7,7 @@ import base64
 from googletrans import Translator
 import json
 
+
 def index(request):
     return render(request, 'core/index.html')
 
@@ -16,9 +17,10 @@ def process_frame(request):
         image_data = request.POST.get('image')
         image_data = image_data.split(',')[1]
         image = Image.open(BytesIO(base64.b64decode(image_data)))
-        text = pytesseract.image_to_string(image, lang='eng')
+        text = pytesseract.image_to_string(image, lang='eng+rus')
         return JsonResponse({'text': text})
     return JsonResponse({'error': 'Invalid request'}, status=400)
+
 
 def translate_text(request):
     if request.method == 'POST':
